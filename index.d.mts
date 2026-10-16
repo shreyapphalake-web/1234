@@ -1,194 +1,155 @@
-//#region src/filter/composable-filters.d.ts
-type StringOrRegExp = string | RegExp;
-type PluginModuleType = 'js' | 'jsx' | 'ts' | 'tsx' | 'json' | 'text' | 'base64' | 'dataurl' | 'binary' | 'empty' | (string & {});
-type FilterExpressionKind = FilterExpression['kind'];
-type FilterExpression = And | Or | Not | Id | ImporterId | ModuleType | Code | Query;
-type TopLevelFilterExpression = Include | Exclude;
-declare class And {
-  kind: 'and';
-  args: FilterExpression[];
-  constructor(...args: FilterExpression[]);
-}
-declare class Or {
-  kind: 'or';
-  args: FilterExpression[];
-  constructor(...args: FilterExpression[]);
-}
-declare class Not {
-  kind: 'not';
-  expr: FilterExpression;
-  constructor(expr: FilterExpression);
-}
-interface QueryFilterObject {
-  [key: string]: StringOrRegExp | boolean;
-}
-interface IdParams {
-  cleanUrl?: boolean;
-}
-declare class Id {
-  kind: 'id';
-  pattern: StringOrRegExp;
-  params: IdParams;
-  constructor(pattern: StringOrRegExp, params?: IdParams);
-}
-declare class ImporterId {
-  kind: 'importerId';
-  pattern: StringOrRegExp;
-  params: IdParams;
-  constructor(pattern: StringOrRegExp, params?: IdParams);
-}
-declare class ModuleType {
-  kind: 'moduleType';
-  pattern: PluginModuleType;
-  constructor(pattern: PluginModuleType);
-}
-declare class Code {
-  kind: 'code';
-  pattern: StringOrRegExp;
-  constructor(expr: StringOrRegExp);
-}
-declare class Query {
-  kind: 'query';
-  key: string;
-  pattern: StringOrRegExp | boolean;
-  constructor(key: string, pattern: StringOrRegExp | boolean);
-}
-declare class Include {
-  kind: 'include';
-  expr: FilterExpression;
-  constructor(expr: FilterExpression);
-}
-declare class Exclude {
-  kind: 'exclude';
-  expr: FilterExpression;
-  constructor(expr: FilterExpression);
-}
-declare function and(...args: FilterExpression[]): And;
-declare function or(...args: FilterExpression[]): Or;
-declare function not(expr: FilterExpression): Not;
-declare function id(pattern: StringOrRegExp, params?: IdParams): Id;
-declare function importerId(pattern: StringOrRegExp, params?: IdParams): ImporterId;
-declare function moduleType(pattern: PluginModuleType): ModuleType;
-declare function code(pattern: StringOrRegExp): Code;
-declare function query(key: string, pattern: StringOrRegExp | boolean): Query;
-declare function include(expr: FilterExpression): Include;
-declare function exclude(expr: FilterExpression): Exclude;
+/// <reference types="node" />
+import * as nativeFs from "fs";
+import picomatch from "picomatch";
+
+//#region src/api/aborter.d.ts
 /**
- * convert a queryObject to FilterExpression like
- * ```js
- *   and(query(k1, v1), query(k2, v2))
- * ```
- * @param queryFilterObject The query filter object needs to be matched.
- * @returns a `And` FilterExpression
+ * AbortController is not supported on Node 14 so we use this until we can drop
+ * support for Node 14.
  */
-declare function queries(queryFilter: QueryFilterObject): And;
-declare function interpreter(exprs: TopLevelFilterExpression | TopLevelFilterExpression[], code?: string, id?: string, moduleType?: PluginModuleType, importerId?: string): boolean;
-interface InterpreterCtx {
-  urlSearchParamsCache?: URLSearchParams;
+declare class Aborter {
+  aborted: boolean;
+  abort(): void;
 }
-declare function interpreterImpl(expr: TopLevelFilterExpression[], code?: string, id?: string, moduleType?: PluginModuleType, importerId?: string, ctx?: InterpreterCtx): boolean;
-declare function exprInterpreter(expr: FilterExpression, code?: string, id?: string, moduleType?: PluginModuleType, importerId?: string, ctx?: InterpreterCtx): boolean;
 //#endregion
-//#region src/filter/filter-vite-plugins.d.ts
+//#region src/api/queue.d.ts
+type OnQueueEmptyCallback = (error: Error | null, output: WalkerState) => void;
 /**
- * Filters out Vite plugins that have `apply: 'serve'` set.
- *
- * Since Rolldown operates in build mode, plugins marked with `apply: 'serve'`
- * are intended only for Vite's dev server and should be excluded from the build process.
- *
- * @param plugins - Array of plugins (can include nested arrays)
- * @returns Filtered array with serve-only plugins removed
- *
- * @example
- * ```ts
- * import { defineConfig } from 'rolldown';
- * import { filterVitePlugins } from '@rolldown/pluginutils';
- * import viteReact from '@vitejs/plugin-react';
- *
- * export default defineConfig({
- *   plugins: filterVitePlugins([
- *     viteReact(),
- *     {
- *       name: 'dev-only',
- *       apply: 'serve', // This will be filtered out
- *       // ...
- *     }
- *   ])
- * });
- * ```
+ * This is a custom stateless queue to track concurrent async fs calls.
+ * It increments a counter whenever a call is queued and decrements it
+ * as soon as it completes. When the counter hits 0, it calls onQueueEmpty.
  */
-declare function filterVitePlugins<T = any>(plugins: T | T[] | null | undefined | false): T[];
+declare class Queue {
+  private onQueueEmpty?;
+  count: number;
+  constructor(onQueueEmpty?: OnQueueEmptyCallback | undefined);
+  enqueue(): number;
+  dequeue(error: Error | null, output: WalkerState): void;
+}
 //#endregion
-//#region src/filter/simple-filters.d.ts
-/**
- * Constructs a RegExp that matches the exact string specified.
- *
- * This is useful for plugin hook filters.
- *
- * @param str the string to match.
- * @param flags flags for the RegExp.
- *
- * @example
- * ```ts
- * import { exactRegex } from '@rolldown/pluginutils';
- * const plugin = {
- *   name: 'plugin',
- *   resolveId: {
- *     filter: { id: exactRegex('foo') },
- *     handler(id) {} // will only be called for `foo`
- *   }
- * }
- * ```
- */
-declare function exactRegex(str: string, flags?: string): RegExp;
-/**
- * Constructs a RegExp that matches a value that has the specified prefix.
- *
- * This is useful for plugin hook filters.
- *
- * @param str the string to match.
- * @param flags flags for the RegExp.
- *
- * @example
- * ```ts
- * import { prefixRegex } from '@rolldown/pluginutils';
- * const plugin = {
- *   name: 'plugin',
- *   resolveId: {
- *     filter: { id: prefixRegex('foo') },
- *     handler(id) {} // will only be called for IDs starting with `foo`
- *   }
- * }
- * ```
- */
-declare function prefixRegex(str: string, flags?: string): RegExp;
-type WidenString<T> = T extends string ? string : T;
-/**
- * Converts a id filter to match with an id with a query.
- *
- * @param input the id filters to convert.
- *
- * @example
- * ```ts
- * import { makeIdFiltersToMatchWithQuery } from '@rolldown/pluginutils';
- * const plugin = {
- *   name: 'plugin',
- *   transform: {
- *     filter: { id: makeIdFiltersToMatchWithQuery(['**' + '/*.js', /\.ts$/]) },
- *     // The handler will be called for IDs like:
- *     // - foo.js
- *     // - foo.js?foo
- *     // - foo.txt?foo.js
- *     // - foo.ts
- *     // - foo.ts?foo
- *     // - foo.txt?foo.ts
- *     handler(code, id) {}
- *   }
- * }
- * ```
- */
-declare function makeIdFiltersToMatchWithQuery<T extends string | RegExp>(input: T): WidenString<T>;
-declare function makeIdFiltersToMatchWithQuery<T extends string | RegExp>(input: readonly T[]): WidenString<T>[];
-declare function makeIdFiltersToMatchWithQuery(input: string | RegExp | readonly (string | RegExp)[]): string | RegExp | (string | RegExp)[];
+//#region src/types.d.ts
+type Counts = {
+  files: number;
+  directories: number;
+  /**
+   * @deprecated use `directories` instead. Will be removed in v7.0.
+   */
+  dirs: number;
+};
+type Group = {
+  directory: string;
+  files: string[];
+  /**
+   * @deprecated use `directory` instead. Will be removed in v7.0.
+   */
+  dir: string;
+};
+type GroupOutput = Group[];
+type OnlyCountsOutput = Counts;
+type PathsOutput = string[];
+type Output = OnlyCountsOutput | PathsOutput | GroupOutput;
+type FSLike = {
+  readdir: typeof nativeFs.readdir;
+  readdirSync: typeof nativeFs.readdirSync;
+  realpath: typeof nativeFs.realpath;
+  realpathSync: typeof nativeFs.realpathSync;
+  stat: typeof nativeFs.stat;
+  statSync: typeof nativeFs.statSync;
+};
+type WalkerState = {
+  root: string;
+  paths: string[];
+  groups: Group[];
+  counts: Counts;
+  options: Options;
+  queue: Queue;
+  controller: Aborter;
+  fs: FSLike;
+  symlinks: Map<string, string>;
+  visited: string[];
+};
+type ResultCallback<TOutput extends Output> = (error: Error | null, output: TOutput) => void;
+type FilterPredicate = (path: string, isDirectory: boolean) => boolean;
+type ExcludePredicate = (dirName: string, dirPath: string) => boolean;
+type PathSeparator = "/" | "\\";
+type Options<TGlobFunction = unknown> = {
+  includeBasePath?: boolean;
+  includeDirs?: boolean;
+  normalizePath?: boolean;
+  maxDepth: number;
+  maxFiles?: number;
+  resolvePaths?: boolean;
+  suppressErrors: boolean;
+  group?: boolean;
+  onlyCounts?: boolean;
+  filters: FilterPredicate[];
+  resolveSymlinks?: boolean;
+  useRealPaths?: boolean;
+  excludeFiles?: boolean;
+  excludeSymlinks?: boolean;
+  exclude?: ExcludePredicate;
+  relativePaths?: boolean;
+  pathSeparator: PathSeparator;
+  signal?: AbortSignal;
+  globFunction?: TGlobFunction;
+  fs?: FSLike;
+};
+type GlobMatcher = (test: string) => boolean;
+type GlobFunction = (glob: string | string[], ...params: unknown[]) => GlobMatcher;
+type GlobParams<T> = T extends ((globs: string | string[], ...params: infer TParams extends unknown[]) => GlobMatcher) ? TParams : [];
 //#endregion
-export { FilterExpression, FilterExpressionKind, QueryFilterObject, TopLevelFilterExpression, and, code, exactRegex, exclude, exprInterpreter, filterVitePlugins, id, importerId, include, interpreter, interpreterImpl, makeIdFiltersToMatchWithQuery, moduleType, not, or, prefixRegex, queries, query };
+//#region src/builder/api-builder.d.ts
+declare class APIBuilder<TReturnType extends Output> {
+  private readonly root;
+  private readonly options;
+  constructor(root: string, options: Options);
+  withPromise(): Promise<TReturnType>;
+  withCallback(cb: ResultCallback<TReturnType>): void;
+  sync(): TReturnType;
+}
+//#endregion
+//#region src/builder/index.d.ts
+declare class Builder<TReturnType extends Output = PathsOutput, TGlobFunction = typeof picomatch> {
+  private readonly globCache;
+  private options;
+  private globFunction?;
+  constructor(options?: Partial<Options<TGlobFunction>>);
+  group(): Builder<GroupOutput, TGlobFunction>;
+  withPathSeparator(separator: "/" | "\\"): this;
+  withBasePath(): this;
+  withRelativePaths(): this;
+  withDirs(): this;
+  withMaxDepth(depth: number): this;
+  withMaxFiles(limit: number): this;
+  withFullPaths(): this;
+  withErrors(): this;
+  withSymlinks({
+    resolvePaths
+  }?: {
+    resolvePaths?: boolean | undefined;
+  }): this;
+  withAbortSignal(signal: AbortSignal): this;
+  normalize(): this;
+  filter(predicate: FilterPredicate): this;
+  onlyDirs(): this;
+  exclude(predicate: ExcludePredicate): this;
+  onlyCounts(): Builder<OnlyCountsOutput, TGlobFunction>;
+  crawl(root?: string): APIBuilder<TReturnType>;
+  withGlobFunction<TFunc>(fn: TFunc): Builder<TReturnType, TFunc>;
+  /**
+   * @deprecated Pass options using the constructor instead:
+   * ```ts
+   * new fdir(options).crawl("/path/to/root");
+   * ```
+   * This method will be removed in v7.0
+   */
+  crawlWithOptions(root: string, options: Partial<Options<TGlobFunction>>): APIBuilder<TReturnType>;
+  glob(...patterns: string[]): Builder<TReturnType, TGlobFunction>;
+  globWithOptions(patterns: string[]): Builder<TReturnType, TGlobFunction>;
+  globWithOptions(patterns: string[], ...options: GlobParams<TGlobFunction>): Builder<TReturnType, TGlobFunction>;
+}
+//#endregion
+//#region src/index.d.ts
+type Fdir = typeof Builder;
+//#endregion
+export { Counts, ExcludePredicate, FSLike, Fdir, FilterPredicate, GlobFunction, GlobMatcher, GlobParams, Group, GroupOutput, OnlyCountsOutput, Options, Output, PathSeparator, PathsOutput, ResultCallback, WalkerState, Builder as fdir };
